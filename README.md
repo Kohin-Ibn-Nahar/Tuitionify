@@ -1,3 +1,5 @@
+A Tuition Media Platform For Our University [International Islamic University Chittagong]
+
 # 🎓 Tuitionify
 
 A university-based **tuition marketplace** built for **International Islamic University Chittagong (IIUC)**. University-student **tutors** offer tuition, while **guardians and students** post tuition requests and hire them.
