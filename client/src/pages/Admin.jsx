@@ -1,0 +1,854 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ShieldCheck, Users, UserCheck, Flag, BadgeCheck, X, Check, BarChart3, Download, ShieldBan, ShieldOff, Trash2, FileText, Search, ScrollText } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { AreaChart, Area, XAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import { Link, useSearchParams } from 'react-router-dom';
+import api from '../api/client';
+import Spinner from '../components/Spinner';
+import EmptyState from '../components/EmptyState';
+import VerifiedBadge from '../components/VerifiedBadge';
+import ConfirmModal from '../components/ConfirmModal';
+import { useTheme } from '../context/ThemeContext';
+import { CURRENCY } from '../data/options';
+
+const TABS = [
+  { key: 'tutors', label: 'Tutors', icon: Users },
+  { key: 'guardians', label: 'Guardians', icon: UserCheck },
+  { key: 'tuitions', label: 'Tuitions', icon: FileText },
+  { key: 'reports', label: 'Reports', icon: Flag },
+  { key: 'analytics', label: 'Analytics', icon: BarChart3 },
+  { key: 'logs', label: 'Activity Log', icon: ScrollText },
+];
+
+// Reusable debounced search input for admin tabs.
+function AdminSearch({ value, onChange, placeholder = 'Search…' }) {
+  const [local, setLocal] = useState(value);
+  const timer = useRef(null);
+
+  function handleChange(e) {
+    const v = e.target.value;
+    setLocal(v);
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => onChange(v), 350);
+  }
+
+  // Sync from parent when they clear programmatically.
+  useEffect(() => { setLocal(value); }, [value]);
+  useEffect(() => () => clearTimeout(timer.current), []);
+
+  return (
+    <div className="relative w-full sm:w-64">
+      <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+      <input
+        type="text"
+        value={local}
+        onChange={handleChange}
+        placeholder={placeholder}
+        className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-slate-700 placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:placeholder:text-slate-500"
+      />
+    </div>
+  );
+}
+
+export default function Admin() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  // Keep the active tab in the URL so "back" from a linked page can land on the
+  // right tab (e.g. an admin opening a tuition then returning to the Tuitions tab).
+  const tab = TABS.some((t) => t.key === searchParams.get('tab'))
+    ? searchParams.get('tab')
+    : 'tutors';
+
+  function selectTab(key) {
+    setSearchParams({ tab: key });
+  }
+
+  return (
+    <div className="mx-auto max-w-5xl px-4 py-10 sm:px-6">
+      <div className="flex items-center gap-3">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand-600 text-white">
+          <ShieldCheck size={22} />
+        </span>
+        <div className="min-w-0">
+          <h1 className="text-2xl font-bold text-slate-900 sm:text-3xl dark:text-white">Admin panel</h1>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Verify tutors, review reports, and view analytics.</p>
+        </div>
+      </div>
+
+      <div className="no-scrollbar mt-8 flex gap-1 overflow-x-auto border-b border-slate-200 dark:border-slate-700">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            onClick={() => selectTab(t.key)}
+            className={`flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-semibold transition sm:px-4 ${
+              tab === t.key
+                ? 'border-brand-600 text-brand-700 dark:text-brand-400'
+                : 'border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-300'
+            }`}
+          >
+            <t.icon size={16} /> {t.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="mt-6">
+        {tab === 'tutors' && <TutorsTab />}
+        {tab === 'guardians' && <GuardiansTab />}
+        {tab === 'tuitions' && <TuitionsTab />}
+        {tab === 'reports' && <ReportsTab />}
+        {tab === 'analytics' && <AnalyticsTab />}
+        {tab === 'logs' && <ActivityLogTab />}
+      </div>
+    </div>
+  );
+}
+
+function AnalyticsTab() {
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    api.get('/admin/analytics').then(({ data }) => setData(data)).catch(() => toast.error('Failed to load analytics'));
+  }, []);
+
+  if (!data) return <Spinner />;
+
+  const { counts, signupsPerWeek, tuitionsPerWeek, topSubjects, topAreas } = data;
+
+  function exportCSV() {
+    let csv = 'Metric,Value\n';
+    csv += `Total Users,${counts.users.total}\n`;
+    csv += `Tutors,${counts.users.tutors}\n`;
+    csv += `Seekers,${counts.users.seekers}\n`;
+    csv += `Total Tuitions,${counts.tuitions.total}\n`;
+    csv += `Open Tuitions,${counts.tuitions.open}\n`;
+    csv += `Closed Tuitions,${counts.tuitions.closed}\n`;
+    csv += `Total Applications,${counts.applications.total}\n`;
+    csv += `Pending Applications,${counts.applications.pending}\n`;
+    csv += `Accepted Applications,${counts.applications.accepted}\n`;
+    csv += `Rejected Applications,${counts.applications.rejected}\n`;
+    csv += '\nWeek,Signups,Tuitions Posted\n';
+    const weeks = new Set([...signupsPerWeek.map((w) => w.week), ...tuitionsPerWeek.map((w) => w.week)]);
+    [...weeks].sort().forEach((w) => {
+      const s = signupsPerWeek.find((x) => x.week === w)?.count || 0;
+      const t = tuitionsPerWeek.find((x) => x.week === w)?.count || 0;
+      csv += `${w},${s},${t}\n`;
+    });
+    csv += '\nTop Subjects,Count\n';
+    topSubjects.forEach((s) => { csv += `${s.name},${s.count}\n`; });
+    csv += '\nTop Areas,Count\n';
+    topAreas.forEach((a) => { csv += `${a.name},${a.count}\n`; });
+
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'tuitionify-analytics.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <div className="space-y-8">
+      <div className="flex justify-end">
+        <button onClick={exportCSV} className="btn-outline text-sm">
+          <Download size={15} /> Export CSV
+        </button>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <StatCard label="Total Users" value={counts.users.total} sub={`${counts.users.tutors} tutors · ${counts.users.seekers} seekers`} />
+        <StatCard label="Tuitions" value={counts.tuitions.total} sub={`${counts.tuitions.open} open · ${counts.tuitions.closed} closed`} />
+        <StatCard label="Applications" value={counts.applications.total} sub={`${counts.applications.pending} pending · ${counts.applications.accepted} accepted`} />
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <ChartCard title="Signups per Week" data={signupsPerWeek} dataKey="count" nameKey="week" color="#0f8f62" />
+        <ChartCard title="Tuitions Posted per Week" data={tuitionsPerWeek} dataKey="count" nameKey="week" color="#3b82f6" />
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <RankList title="Top Subjects" items={topSubjects} />
+        <RankList title="Top Areas" items={topAreas} />
+      </div>
+    </div>
+  );
+}
+
+function StatCard({ label, value, sub }) {
+  return (
+    <div className="card p-5">
+      <p className="text-sm font-medium text-slate-500 dark:text-slate-400">{label}</p>
+      <p className="mt-1 text-3xl font-bold text-slate-900 dark:text-white">{value.toLocaleString()}</p>
+      {sub && <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">{sub}</p>}
+    </div>
+  );
+}
+
+function ChartCard({ title, data, dataKey, nameKey, color }) {
+  const { theme } = useTheme();
+  const dark = theme === 'dark';
+  const gradientId = `spark-${title.replace(/\s/g, '')}`;
+  const latest = data.length ? data[data.length - 1][dataKey] : 0;
+  return (
+    <div className="card p-5">
+      <div className="flex items-baseline justify-between gap-3">
+        <h4 className="text-sm font-semibold text-slate-900 dark:text-white">{title}</h4>
+        <span className="shrink-0 text-2xl font-bold text-slate-900 dark:text-white">{latest}</span>
+      </div>
+      <ResponsiveContainer width="100%" height={80}>
+        <AreaChart data={data} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
+          <defs>
+            <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={color} stopOpacity={0.25} />
+              <stop offset="100%" stopColor={color} stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <XAxis dataKey={nameKey} hide />
+          {/* Recharts' default tooltip sets a white background but no text
+              colour, so the week label inherited the near-white body colour in
+              dark mode and vanished. Both colours are set explicitly here. */}
+          <Tooltip
+            labelFormatter={(v) => `Week: ${v}`}
+            formatter={(v) => [v, '']}
+            contentStyle={{
+              backgroundColor: dark ? '#1e293b' : '#ffffff',
+              border: `1px solid ${dark ? '#334155' : '#e2e8f0'}`,
+              borderRadius: '0.5rem',
+              fontSize: '12px',
+              padding: '6px 10px',
+              boxShadow: '0 4px 12px rgb(0 0 0 / 0.08)',
+            }}
+            labelStyle={{ color: dark ? '#f1f5f9' : '#0f172a', fontWeight: 600 }}
+            itemStyle={{ color: dark ? '#cbd5e1' : '#334155' }}
+          />
+          <Area type="monotone" dataKey={dataKey} stroke={color} strokeWidth={2} fill={`url(#${gradientId})`} dot={false} />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function RankList({ title, items }) {
+  const max = items[0]?.count || 1;
+  return (
+    <div className="card p-5">
+      <h4 className="mb-3 text-sm font-semibold text-slate-900 dark:text-white">{title}</h4>
+      <div className="space-y-2">
+        {items.map((item, i) => (
+          <div key={item.name} className="flex items-center gap-3">
+            <span className="w-5 text-xs font-medium text-slate-400">{i + 1}.</span>
+            <div className="flex-1">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-700 dark:text-slate-300">{item.name}</span>
+                <span className="text-xs font-medium text-slate-500">{item.count}</span>
+              </div>
+              <div className="mt-1 h-1.5 rounded-full bg-slate-100 dark:bg-slate-700">
+                <div className="h-full rounded-full bg-brand-500" style={{ width: `${(item.count / max) * 100}%` }} />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TutorsTab() {
+  const [tutors, setTutors] = useState(null);
+  const [busy, setBusy] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const [search, setSearch] = useState('');
+
+  const loadTutors = useCallback(() => {
+    const params = { limit: 100 };
+    if (search) params.q = search;
+    api.get('/admin/tutors', { params })
+      .then(({ data }) => setTutors(data.data))
+      .catch(() => toast.error('Failed to load tutors'));
+  }, [search]);
+
+  useEffect(() => {
+    loadTutors();
+    const interval = setInterval(loadTutors, 30000);
+    return () => clearInterval(interval);
+  }, [loadTutors]);
+
+  async function toggleVerify(t) {
+    setBusy(t._id);
+    try {
+      const { data } = await api.patch(`/admin/tutors/${t._id}/verify`, { isVerified: !t.isVerified });
+      setTutors((list) => list.map((x) => (x._id === t._id ? { ...x, isVerified: data.isVerified } : x)));
+      toast.success(data.isVerified ? 'Tutor verified' : 'Verification revoked');
+    } catch {
+      toast.error('Update failed');
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function toggleRestrict(t) {
+    setBusy(t._id + '-r');
+    try {
+      const { data } = await api.patch(`/admin/users/${t._id}/restrict`, { restricted: !t.restricted });
+      setTutors((list) => list.map((x) => (x._id === t._id ? { ...x, restricted: data.restricted } : x)));
+      toast.success(data.restricted ? 'Tutor restricted' : 'Restriction lifted');
+    } catch {
+      toast.error('Update failed');
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await api.delete(`/admin/users/${deleteTarget._id}`);
+      setTutors((list) => list.filter((x) => x._id !== deleteTarget._id));
+      toast.success('Tutor account deleted permanently');
+      setDeleteTarget(null);
+    } catch (err) {
+      toast.error(err?.response?.data?.message || 'Delete failed');
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  if (!tutors) return <Spinner />;
+  if (!tutors.length && !search)
+    return <EmptyState title="No tutors yet" message="Tutors will appear here once they register." icon={Users} />;
+
+  return (
+    <>
+      <div className="mb-4">
+        <AdminSearch value={search} onChange={setSearch} placeholder="Search by name, email, university…" />
+      </div>
+      <div className="space-y-3">
+        {tutors.map((t) => (
+          <div key={t._id} className="card flex flex-col gap-3 p-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-semibold text-slate-900 dark:text-white">{t.name}</span>
+                {t.isVerified && <VerifiedBadge size={15} />}
+                {t.restricted && (
+                  <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-600 dark:bg-red-900/30 dark:text-red-400">
+                    Restricted
+                  </span>
+                )}
+              </div>
+              <p className="break-all text-sm text-slate-500 dark:text-slate-400">{t.email}</p>
+              <p className="text-xs text-slate-400 dark:text-slate-500">
+                {[t.department, t.university].filter(Boolean).join(' · ') || 'No academic info'}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => toggleVerify(t)}
+                disabled={busy === t._id}
+                className={`flex-1 whitespace-nowrap sm:flex-none ${t.isVerified ? 'btn-outline' : 'btn-primary'}`}
+              >
+                {t.isVerified ? <><X size={16} /> Revoke</> : <><BadgeCheck size={16} /> Verify</>}
+              </button>
+              <button
+                onClick={() => toggleRestrict(t)}
+                disabled={busy === t._id + '-r'}
+                className={`btn-outline flex-1 whitespace-nowrap sm:flex-none ${t.restricted ? 'border-green-300 text-green-600 hover:bg-green-50 dark:border-green-700 dark:text-green-400 dark:hover:bg-green-900/30' : 'border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/30'}`}
+              >
+                {t.restricted ? <><ShieldOff size={16} /> Unrestrict</> : <><ShieldBan size={16} /> Restrict</>}
+              </button>
+              <button
+                onClick={() => setDeleteTarget(t)}
+                className="btn-outline flex-1 whitespace-nowrap border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/30 sm:flex-none"
+              >
+                <Trash2 size={16} /> Delete
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <ConfirmModal
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={confirmDelete}
+        title="Delete tutor account?"
+        message={deleteTarget ? `This will permanently delete ${deleteTarget.name}'s account (${deleteTarget.email}), all their reviews, applications, bookmarks, and contact requests. This action cannot be undone.` : ''}
+        confirmText="Delete Permanently"
+        busyText="Deleting..."
+        busy={deleting}
+      />
+    </>
+  );
+}
+
+function GuardiansTab() {
+  const [guardians, setGuardians] = useState(null);
+  const [busy, setBusy] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const [search, setSearch] = useState('');
+
+  const loadGuardians = useCallback(() => {
+    const params = { limit: 100 };
+    if (search) params.q = search;
+    api.get('/admin/guardians', { params })
+      .then(({ data }) => setGuardians(data.data))
+      .catch(() => toast.error('Failed to load guardians'));
+  }, [search]);
+
+  useEffect(() => {
+    loadGuardians();
+    const interval = setInterval(loadGuardians, 30000);
+    return () => clearInterval(interval);
+  }, [loadGuardians]);
+
+  async function toggleRestrict(g) {
+    setBusy(g._id);
+    try {
+      const { data } = await api.patch(`/admin/users/${g._id}/restrict`, { restricted: !g.restricted });
+      setGuardians((list) => list.map((x) => (x._id === g._id ? { ...x, restricted: data.restricted } : x)));
+      toast.success(data.restricted ? 'Guardian restricted' : 'Restriction lifted');
+    } catch {
+      toast.error('Update failed');
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await api.delete(`/admin/users/${deleteTarget._id}`);
+      setGuardians((list) => list.filter((x) => x._id !== deleteTarget._id));
+      toast.success('Guardian account deleted permanently');
+      setDeleteTarget(null);
+    } catch (err) {
+      toast.error(err?.response?.data?.message || 'Delete failed');
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  if (!guardians) return <Spinner />;
+  if (!guardians.length && !search)
+    return <EmptyState title="No guardians yet" message="Guardians will appear here once they register." icon={UserCheck} />;
+
+  return (
+    <>
+      <div className="mb-4">
+        <AdminSearch value={search} onChange={setSearch} placeholder="Search by name, email, phone…" />
+      </div>
+      <div className="space-y-3">
+        {guardians.map((g) => (
+          <div key={g._id} className="card flex flex-col gap-3 p-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-semibold text-slate-900 dark:text-white">{g.name}</span>
+                {g.restricted && (
+                  <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-600 dark:bg-red-900/30 dark:text-red-400">
+                    Restricted
+                  </span>
+                )}
+              </div>
+              <p className="break-all text-sm text-slate-500 dark:text-slate-400">{g.email}</p>
+              <p className="text-xs text-slate-400 dark:text-slate-500">{g.phone || 'No phone'} · Joined {new Date(g.createdAt).toLocaleDateString()}</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => toggleRestrict(g)}
+                disabled={busy === g._id}
+                className={`btn-outline flex-1 whitespace-nowrap sm:flex-none ${g.restricted ? 'border-green-300 text-green-600 hover:bg-green-50 dark:border-green-700 dark:text-green-400 dark:hover:bg-green-900/30' : 'border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/30'}`}
+              >
+                {g.restricted ? <><ShieldOff size={16} /> Unrestrict</> : <><ShieldBan size={16} /> Restrict</>}
+              </button>
+              <button
+                onClick={() => setDeleteTarget(g)}
+                className="btn-outline flex-1 whitespace-nowrap border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/30 sm:flex-none"
+              >
+                <Trash2 size={16} /> Delete
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <ConfirmModal
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={confirmDelete}
+        title="Delete guardian account?"
+        message={deleteTarget ? `This will permanently delete ${deleteTarget.name}'s account (${deleteTarget.email}), all their tuition posts, applications received, bookmarks, and contact requests. This action cannot be undone.` : ''}
+        confirmText="Delete Permanently"
+        busyText="Deleting..."
+        busy={deleting}
+      />
+    </>
+  );
+}
+
+function TuitionsTab() {
+  const [tuitions, setTuitions] = useState(null);
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const [search, setSearch] = useState('');
+
+  const loadTuitions = useCallback(() => {
+    const params = { limit: 100 };
+    if (statusFilter !== 'all') params.status = statusFilter;
+    if (search) params.q = search;
+
+    api.get('/admin/tuitions', { params })
+      .then(({ data }) => setTuitions(data.data))
+      .catch(() => toast.error('Failed to load tuitions'));
+  }, [statusFilter, search]);
+
+  useEffect(() => {
+    loadTuitions();
+    const interval = setInterval(loadTuitions, 30000);
+    return () => clearInterval(interval);
+  }, [loadTuitions]);
+
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await api.delete(`/admin/tuitions/${deleteTarget._id}`);
+      setTuitions((list) => list.filter((x) => x._id !== deleteTarget._id));
+      toast.success('Tuition deleted permanently');
+      setDeleteTarget(null);
+    } catch (err) {
+      toast.error(err?.response?.data?.message || 'Delete failed');
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  if (!tuitions) return <Spinner />;
+
+  return (
+    <>
+      <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-center">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex gap-2">
+            <button
+              onClick={() => setStatusFilter('all')}
+              className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+                statusFilter === 'all'
+                  ? 'bg-brand-600 text-white'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300 dark:hover:bg-slate-600'
+              }`}
+            >
+              All
+            </button>
+            <button
+              onClick={() => setStatusFilter('open')}
+              className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+                statusFilter === 'open'
+                  ? 'bg-brand-600 text-white'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300 dark:hover:bg-slate-600'
+              }`}
+            >
+              Open
+            </button>
+            <button
+              onClick={() => setStatusFilter('closed')}
+              className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+                statusFilter === 'closed'
+                  ? 'bg-brand-600 text-white'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300 dark:hover:bg-slate-600'
+              }`}
+            >
+              Closed
+            </button>
+          </div>
+          <span className="text-sm text-slate-500 dark:text-slate-400">
+            {tuitions.length} tuition(s)
+          </span>
+        </div>
+        <AdminSearch value={search} onChange={setSearch} placeholder="Search by title, area…" />
+      </div>
+
+      {tuitions.length === 0 ? (
+        <EmptyState
+          title="No tuitions found"
+          message={statusFilter === 'all' ? 'No tuitions have been posted yet.' : `No ${statusFilter} tuitions found.`}
+          icon={FileText}
+        />
+      ) : (
+        <div className="space-y-3">
+          {tuitions.map((t) => (
+            <div key={t._id} className="card p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Link
+                      to={`/tuitions/${t._id}?from=admin`}
+                      className="font-semibold text-slate-900 hover:text-brand-700 dark:text-white dark:hover:text-brand-400"
+                    >
+                      {t.title}
+                    </Link>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-xs font-medium capitalize ${
+                        t.status === 'open'
+                          ? 'bg-green-50 text-green-600 dark:bg-green-900/30 dark:text-green-400'
+                          : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400'
+                      }`}
+                    >
+                      {t.status}
+                    </span>
+                    {t.createdBy?.restricted && (
+                      <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-600 dark:bg-red-900/30 dark:text-red-400">
+                        Owner Restricted
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="mt-1 flex flex-wrap gap-2">
+                    {t.subjects?.slice(0, 3).map((s) => (
+                      <span key={s} className="chip text-xs">
+                        {s}
+                      </span>
+                    ))}
+                    {t.subjects?.length > 3 && (
+                      <span className="chip text-xs">+{t.subjects.length - 3}</span>
+                    )}
+                  </div>
+
+                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+                    <span>📍 {t.area}</span>
+                    <span>💰 {CURRENCY}{t.salary?.toLocaleString()}/mo</span>
+                    <span>📚 {t.classLevel}</span>
+                  </div>
+
+                  <p className="mt-2 break-all text-xs text-slate-400 dark:text-slate-500">
+                    Posted by: {t.createdBy?.name || 'Unknown'} ({t.createdBy?.email || '—'})
+                  </p>
+                  <p className="text-xs text-slate-400 dark:text-slate-500">
+                    Posted: {new Date(t.createdAt).toLocaleString()}
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <Link
+                    to={`/tuitions/${t._id}?from=admin`}
+                    className="btn-outline flex-1 whitespace-nowrap text-sm sm:flex-none"
+                  >
+                    View Details
+                  </Link>
+                  <button
+                    onClick={() => setDeleteTarget(t)}
+                    className="btn-outline flex-1 whitespace-nowrap border-red-300 text-sm text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/30 sm:flex-none"
+                  >
+                    <Trash2 size={16} /> Delete
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <ConfirmModal
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={confirmDelete}
+        title="Delete tuition post?"
+        message={
+          deleteTarget
+            ? `This will permanently delete "${deleteTarget.title}" posted by ${deleteTarget.createdBy?.name || 'Unknown'}, along with all applications and bookmarks. This action cannot be undone.`
+            : ''
+        }
+        confirmText="Delete Permanently"
+        busyText="Deleting..."
+        busy={deleting}
+      />
+    </>
+  );
+}
+
+function ReportsTab() {
+  const [reports, setReports] = useState(null);
+  const [busy, setBusy] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+
+  useEffect(() => {
+    api.get('/admin/reports', { params: { limit: 100 } })
+      .then(({ data }) => setReports(data.data))
+      .catch(() => toast.error('Failed to load reports'));
+  }, []);
+
+  async function setStatus(r, status) {
+    setBusy(r._id);
+    try {
+      const { data } = await api.patch(`/admin/reports/${r._id}`, { status });
+      setReports((list) => list.map((x) => (x._id === r._id ? { ...x, status: data.status } : x)));
+      toast.success(`Marked ${data.status}`);
+    } catch {
+      toast.error('Update failed');
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function confirmDeleteTuition() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await api.delete(`/admin/tuitions/${deleteTarget.targetId}`);
+      // Also mark the report as reviewed
+      await api.patch(`/admin/reports/${deleteTarget._id}`, { status: 'reviewed' });
+      setReports((list) => list.map((x) => (x._id === deleteTarget._id ? { ...x, status: 'reviewed' } : x)));
+      toast.success('Tuition deleted permanently');
+      setDeleteTarget(null);
+    } catch (err) {
+      toast.error(err?.response?.data?.message || 'Delete failed');
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  if (!reports) return <Spinner />;
+  if (!reports.length)
+    return <EmptyState title="No reports" message="Reported profiles and posts will show up here." icon={Flag} />;
+
+  const statusStyle = {
+    open: 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+    reviewed: 'bg-brand-50 text-brand-700 dark:bg-brand-900/30 dark:text-brand-400',
+    dismissed: 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400',
+  };
+
+  return (
+    <>
+      <div className="space-y-3">
+        {reports.map((r) => (
+          <div key={r._id} className="card p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="chip capitalize">{r.targetType}</span>
+                  <span className="font-semibold text-slate-900 dark:text-white">{r.reason}</span>
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium capitalize ${statusStyle[r.status]}`}>
+                    {r.status}
+                  </span>
+                </div>
+                {r.details && <p className="mt-1.5 text-sm text-slate-600 dark:text-slate-400">{r.details}</p>}
+                <p className="mt-1 break-all text-xs text-slate-400 dark:text-slate-500">
+                  Reported by {r.reporter?.name || 'Unknown'} ({r.reporter?.email || '—'})
+                </p>
+                {r.targetId && (
+                  <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">
+                    Target ID: {r.targetId}
+                  </p>
+                )}
+              </div>
+              {r.status === 'open' && (
+                <div className="flex flex-wrap gap-2">
+                  <button onClick={() => setStatus(r, 'reviewed')} disabled={busy === r._id} className="btn-primary flex-1 whitespace-nowrap sm:flex-none">
+                    <Check size={16} /> Reviewed
+                  </button>
+                  <button onClick={() => setStatus(r, 'dismissed')} disabled={busy === r._id} className="btn-outline flex-1 whitespace-nowrap sm:flex-none">
+                    <X size={16} /> Dismiss
+                  </button>
+                  {r.targetType === 'tuition' && r.targetId && (
+                    <button
+                      onClick={() => setDeleteTarget(r)}
+                      className="btn-outline flex-1 whitespace-nowrap border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/30 sm:flex-none"
+                    >
+                      <Trash2 size={16} /> Delete Tuition
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <ConfirmModal
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={confirmDeleteTuition}
+        title="Delete reported tuition?"
+        message={deleteTarget ? `This will permanently delete the tuition post (ID: ${deleteTarget.targetId}), along with all its applications and bookmarks. The report will be marked as reviewed. This action cannot be undone.` : ''}
+        confirmText="Delete Tuition"
+        busyText="Deleting..."
+        busy={deleting}
+      />
+    </>
+  );
+}
+
+function ActivityLogTab() {
+  const [logs, setLogs] = useState(null);
+
+  const loadLogs = useCallback(() => {
+    api.get('/admin/logs', { params: { limit: 100 } })
+      .then(({ data }) => setLogs(data.data))
+      .catch(() => toast.error('Failed to load logs'));
+  }, []);
+
+  useEffect(() => {
+    loadLogs();
+    const interval = setInterval(loadLogs, 30000);
+    return () => clearInterval(interval);
+  }, [loadLogs]);
+
+  if (!logs) return <Spinner />;
+  if (!logs.length)
+    return <EmptyState title="No activity yet" message="Admin actions will be logged here." icon={ScrollText} />;
+
+  const actionLabels = {
+    restrict_user: 'Restricted User',
+    unrestrict_user: 'Unrestricted User',
+    verify_tutor: 'Verified Tutor',
+    unverify_tutor: 'Unverified Tutor',
+    update_report_status: 'Updated Report',
+    delete_tuition: 'Deleted Tuition',
+    delete_user: 'Deleted User',
+  };
+
+  return (
+    <div className="space-y-3">
+      {logs.map((log) => (
+        <div key={log._id} className="card p-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-semibold text-slate-900 dark:text-white">
+                  {actionLabels[log.action] || log.action}
+                </span>
+                <span className="text-xs text-slate-500 dark:text-slate-400">
+                  by {log.actorEmail}
+                </span>
+              </div>
+
+              <div className="mt-1 text-sm text-slate-600 dark:text-slate-400">
+                {log.targetEmail && (
+                  <span className="mr-3">Target: <span className="font-medium text-slate-700 dark:text-slate-300">{log.targetEmail}</span></span>
+                )}
+                {log.details?.tuitionTitle && (
+                  <span className="mr-3">Tuition: <span className="font-medium text-slate-700 dark:text-slate-300">{log.details.tuitionTitle}</span></span>
+                )}
+              </div>
+
+              {log.action === 'update_report_status' && log.details && (
+                <p className="mt-1 text-xs text-slate-500">
+                  Status changed from <span className="font-mono">{log.details.previousStatus}</span> to <span className="font-mono">{log.details.newStatus}</span>
+                </p>
+              )}
+
+              <div className="mt-2 text-xs text-slate-400">
+                {new Date(log.createdAt).toLocaleString()}
+                <span className="mx-2">•</span>
+                <span className="font-mono text-[10px]">ID: {log.targetId}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
